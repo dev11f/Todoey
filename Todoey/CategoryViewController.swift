@@ -7,13 +7,17 @@
 //
 
 import UIKit
-import CoreData
+import RealmSwift
 
 class CategoryViewController: UITableViewController {
     
-    var categories = [Category]()
+    // try가 안될 경우는 맨 처음 실행될 때라고 함. AppDelegate에서만 error 처리해주고 나머지에서는 이렇게 해주면 됨
+    let realm = try! Realm()
     
-    let context = (UIApplication.shared.delegate as! AppDelegate).persistContainer.viewContext
+    // Result는 realm에 속해있는 type인데 auto-update하기 때문에 따로 append를 하거나 뭐하지 않아도 된다.
+    var categories: Results<Category>?
+    
+
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -24,46 +28,24 @@ class CategoryViewController: UITableViewController {
 
     func loadCategories() {
         
-        let request: NSFetchRequest<Category> = Category.fetchRequest()
-        
-        do {
-            categories = try context.fetch(request)
-        } catch {
-            print("error \(error)")
-        }
-        
+        categories = realm.objects(Category.self)
+       
         tableView.reloadData()
     }
     
-    func saveCategories() {
-        
-        do {
-            try context.save()
-        } catch {
-            print("error \(error)")
-        }
-        
-        tableView.reloadData()
-        
-    }
-
-
+   
     @IBAction func addButtonPressed(_ sender: UIBarButtonItem) {
         
         var textField = UITextField()
         
         let alert = UIAlertController(title: "Add New Category", message: "", preferredStyle: .alert)
-        
+    
         let action = UIAlertAction(title: "Add Category", style: .default) { (action) in
             
-            // 아래 Item은 DataModel 안에 있는 Entity 이름. 타입은 NSManagedObject인데 이게 CoreData Table에서 Row가 됨.
-            let newCategory = Category(context: self.context)
+            let newCategory = Category()
             newCategory.name = textField.text!
-          
             
-            self.categories.append(newCategory)
-            
-            self.saveCategories()
+            self.save(category: newCategory)
             
         }
         
@@ -77,15 +59,33 @@ class CategoryViewController: UITableViewController {
         
     }
     
+    func save(category: Category) {
+        
+        do {
+            try realm.write {
+                realm.add(category)
+            }
+        } catch {
+            print("error \(error)")
+        }
+        
+        tableView.reloadData()
+        
+    }
+    
+    
+    
     //MARK: - TableView Datasource Methods
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return categories.count
+        
+        // Nil Coalescing Operator - 앞에 값이 nil이면 ?? 뒤의 값을 써라
+        return categories?.count ?? 1
     }
     
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "CategoryCell", for: indexPath)
         
-        cell.textLabel?.text = categories[indexPath.row].name
+        cell.textLabel?.text = categories?[indexPath.row].name ?? "No Categories Added Yet"
         
         return cell
     }
@@ -101,7 +101,7 @@ class CategoryViewController: UITableViewController {
         let destinationVC = segue.destination as! TodoListViewController
         
         if let indexPath = tableView.indexPathForSelectedRow {
-            destinationVC.selectedCategory = categories[indexPath.row]
+            destinationVC.selectedCategory = categories?[indexPath.row]
         }
     }
 }

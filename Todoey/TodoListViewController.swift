@@ -7,7 +7,7 @@
 //
 
 import UIKit
-import CoreData
+import RealmSwift
 
 
 class TodoListViewController: UITableViewController {
@@ -15,8 +15,10 @@ class TodoListViewController: UITableViewController {
     // 참고로 UserDefault는 plist에 key:value 형태로 저장되는데, 얘는 UserDefault에서 무슨 값을 가져오려할 때 전체 리스트를 불러온다.
     // 실제 Data를 저장하기엔 비효율
     
-    var itemArray = [Item]()
+    var todoItems: Results<Item>?
     
+    let realm = try! Realm()
+
     // didSet은 seletedCategory에 value가 생겼을 때 실행된다.
     var selectedCategory: Category? {
         didSet{
@@ -24,10 +26,6 @@ class TodoListViewController: UITableViewController {
         }
     }
  
-    // AppDelegate.swift에 바로 접근할 수 없음. object가 아니라 class니까. 아래 방법을 통해 접근 가능
-    // context는 실제 Database 앞에 있는 temporary한 영역이다. context에서 발생한 일을 영구적으로 만들려면 database에 저장해줘야 한다.
-    let context = (UIApplication.shared.delegate as! AppDelegate).persistContainer.viewContext
-    
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -36,17 +34,23 @@ class TodoListViewController: UITableViewController {
 
     //MARK: - Tableview Datasource Methods
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return itemArray.count
+        return todoItems?.count ?? 1
     }
     
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         
         let cell = tableView.dequeueReusableCell(withIdentifier: "ToDoItemCell", for: indexPath)
         
-        let item = itemArray[indexPath.row]
+        if let item = todoItems?[indexPath.row] {
+            
+            cell.textLabel?.text = item.title
+            cell.accessoryType = item.done ? .checkmark : .none
+            
+        } else {
+            cell.textLabel?.text = "No Items Added"
+        }
         
-        cell.textLabel?.text = item.title
-        cell.accessoryType = item.done ? .checkmark : .none
+      
     
         return cell
     }
@@ -54,15 +58,17 @@ class TodoListViewController: UITableViewController {
     //MARK: - Tableview Delegate Methods
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         
-        if tableView.cellForRow(at: indexPath)?.accessoryType == .checkmark {
-            tableView.cellForRow(at: indexPath)?.accessoryType = .none
-        } else {
-            tableView.cellForRow(at: indexPath)?.accessoryType = .checkmark
+        if let item = todoItems?[indexPath.row] {
+            do {
+                try realm.write {
+                    item.done = !item.done
+                }
+            } catch {
+                print("Error saving done, \(error)")
+            }
         }
         
-        itemArray[indexPath.row].done = !itemArray[indexPath.row].done
-        
-        saveItems()
+        tableView.reloadData()
         
         tableView.deselectRow(at: indexPath, animated: true)
     }
@@ -77,15 +83,22 @@ class TodoListViewController: UITableViewController {
         
         let action = UIAlertAction(title: "Add Item", style: .default) { (action) in
             
-            // 아래 Item은 DataModel 안에 있는 Entity 이름. 타입은 NSManagedObject인데 이게 CoreData Table에서 Row가 됨.
-            let newItem = Item(context: self.context)
-            newItem.title = textField.text!
-            newItem.done = false
-            newItem.parentCategory = self.selectedCategory
+            if let currentCategory = self.selectedCategory {
+                
+                do {
+                    try self.realm.write {
+                        let newItem = Item()
+                        newItem.title = textField.text!
+                        newItem.dateCreated = Date()
+                        currentCategory.items.append(newItem)
+                    }
+                } catch {
+                    print("Error, \(error)")
+                }
+            }
             
-            self.itemArray.append(newItem)
-            
-            self.saveItems()
+            self.tableView.reloadData()
+          
             
         }
         
@@ -98,41 +111,16 @@ class TodoListViewController: UITableViewController {
         present(alert, animated: true, completion: nil)
     }
     
-    //MARK: - Model Manupulation Methods
-    func saveItems() {
-
-        do {
-            try context.save()
-        } catch {
-            print("error saving context \(error)")
-        }
-        
-        tableView.reloadData()
-    }
  
     // parameter없이 콜하면 Item.fetchRequest() 라는 default value를 줄 것
-    func loadItems(with request: NSFetchRequest<Item> = Item.fetchRequest(), predicate: NSPredicate? = nil) {
+    func loadItems() {
         
-        let categoryPredicate = NSPredicate(format: "parentCategory.name MATCHES %@", selectedCategory!.name!)
+        todoItems = selectedCategory?.items.sorted(byKeyPath: "title", ascending: true)
         
-        if let additionalPredicate = predicate {
-            request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [categoryPredicate, additionalPredicate])
-        } else {
-            request.predicate = categoryPredicate
-        }
-        
-        do {
-            itemArray = try context.fetch(request)
-        } catch {
-            print("error \(error)")
-        }
-        
-         tableView.reloadData()
+        tableView.reloadData()
         
     }
     
-  
-
 }
 
 
@@ -141,13 +129,11 @@ class TodoListViewController: UITableViewController {
 extension TodoListViewController: UISearchBarDelegate {
     
     func searchBarSearchButtonClicked(_ searchBar: UISearchBar) {
-        let request: NSFetchRequest<Item> = Item.fetchRequest()
         
-        let predicate = NSPredicate(format: "title CONTAINS[cd] %@", searchBar.text!)
-
-        request.sortDescriptors = [NSSortDescriptor(key: "title", ascending: true)]
-    
-        loadItems(with: request, predicate: predicate)
+        todoItems = todoItems?.filter("title CONTAINS[cd] %@", searchBar.text!).sorted(byKeyPath: "dateCreated", ascending: false)
+        
+        tableView.reloadData()
+        
     }
     
     func searchBar(_ searchBar: UISearchBar, textDidChange searchText: String) {
